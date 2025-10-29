@@ -4,114 +4,81 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>Studs — 360 (autorotate + drag)</title>
+
+  <!-- jQuery (cdnjs) -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jquery/3.7.1/jquery.min.js" crossorigin="anonymous"></script>
+
+  <!-- SpriteSpin 4.1.0 (jsDelivr) -->
+  <link  href="https://cdn.jsdelivr.net/npm/spritespin@4.1.0/release/spritespin.min.css" rel="stylesheet" />
+  <script src="https://cdn.jsdelivr.net/npm/spritespin@4.1.0/release/spritespin.min.js"></script>
+
   <style>
     body{margin:0;background:#000;font-family:system-ui,Segoe UI,Roboto,Helvetica,Arial,sans-serif}
     .wrap{width:min(92vw,1200px);margin:24px auto;text-align:center}
     #studs360{width:100%;height:auto}
     #status{color:#bbb;margin-top:8px;font-size:14px}
-    #err{color:#ff8f8f;margin-top:12px;font-size:14px;white-space:pre-line}
   </style>
-
-  <!-- SpriteSpin (with error handlers so we can fall back) -->
-  <script>
-    window._cdn = { jq:false, ss:false };
-  </script>
-  <script src="https://code.jquery.com/jquery-3.7.1.min.js"
-          onload="window._cdn.jq=true" onerror="window._cdn.jq=false"></script>
-  <script src="https://cdn.jsdelivr.net/npm/spritespin@4.0.12/release/spritespin.min.js"
-          onload="window._cdn.ss=true" onerror="window._cdn.ss=false"></script>
-  <link  href="https://cdn.jsdelivr.net/npm/spritespin@4.0.12/release/spritespin.min.css" rel="stylesheet" />
 </head>
 <body>
   <div class="wrap">
     <div id="studs360"></div>
     <div id="status">Loading…</div>
-    <div id="err"></div>
   </div>
 
   <script>
-    // ---- YOUR EXACT FILES ----
-    const folder = 'XR test 28.10.2';     // has a space
-    const frames = 192;                    // 0_0.jpg ... 0_191.jpg
-    const secondsPerTurn = 4;              // autorotate speed
-    // --------------------------
+    // === YOUR EXACT FRAMES ===
+    const folder = 'XR test 28.10.2';   // note the space
+    const total  = 192;                  // 0_0.jpg ... 0_191.jpg
+    const secondsPerTurn = 4;            // autorotate speed
+    // =========================
 
+    // URL-encode spaces for requests
     const base = encodeURIComponent(folder).replace(/%2F/g,'/');
-    const srcs = Array.from({length: frames}, (_,i) => `${base}/0_${i}.jpg`);
+    const srcs = Array.from({length: total}, (_,i) => `${base}/0_${i}.jpg`);
 
-    const statusEl = document.getElementById('status');
-    const errEl = document.getElementById('err');
-    const mount = document.getElementById('studs360');
-
-    // quick probe of the first image so we can error nicely if path is wrong
+    // Probe first frame so we fail gracefully if the path is off
     function probeFirst(){
       return new Promise(res=>{
-        const im=new Image();
-        im.onload=()=>res(true);
-        im.onerror=()=>res(false);
-        im.src=srcs[0]+'?b='+Date.now();
+        const im = new Image();
+        im.onload = () => res(true);
+        im.onerror = () => res(false);
+        im.src = srcs[0] + '?b=' + Date.now();
       });
     }
 
-    async function start(){
+    (async function start(){
       const ok = await probeFirst();
       if(!ok){
-        statusEl.textContent='';
-        errEl.textContent = `Can't load first frame:\n${srcs[0]}\n\nCheck folder/name/case.`;
+        document.getElementById('status').textContent =
+          "Can't load first frame: " + srcs[0] + " — check folder/name/case.";
         return;
       }
 
-      // If SpriteSpin is available, use it (autorotate + drag)
-      if (window._cdn.jq && window._cdn.ss && window.jQuery && window.jQuery.fn.spritespin){
-        statusEl.textContent = 'Starting 360…';
-        $('#studs360').spritespin({
-          source: srcs,
-          width: 1200,
-          height: 1200,
-          sense: 1,
-          animate: true,                         // AUTOROTATE
-          loop: true,
-          frame: 0,
-          frames: srcs.length,
-          frameTime: Math.round((secondsPerTurn*1000)/srcs.length),
-          responsive: true,
-          detectSubsampling: true,
-          onLoad: function(e, data){
-            statusEl.textContent = 'Loaded. Drag to rotate.';
-            const $el = $(data.target);
-            const stop = () => { data.animate = false; statusEl.textContent='Drag to rotate.'; };
-            $el.one('mousedown touchstart wheel keydown', stop);
-          }
-        });
-        return;
-      }
+      // Initialize SpriteSpin (autorotate + drag)
+      $('#studs360').spritespin({
+        source: srcs,
+        width: 1200,
+        height: 1200,
+        sense: 1,                         // drag direction (set -1 to invert)
+        animate: true,                    // AUTOROTATE ON
+        loop: true,
+        frame: 0,
+        frames: srcs.length,
+        frameTime: Math.round((secondsPerTurn*1000)/srcs.length), // ~4s/turn
+        responsive: true,
+        detectSubsampling: true,
 
-      // Fallback: simple no-library cycler so at least it shows
-      statusEl.textContent = 'CDN blocked? Using fallback (autorotate only; no drag).';
-      const img = document.createElement('img');
-      img.id = 'fallback';
-      img.alt = '360 view';
-      img.style.width = '100%';
-      img.style.height = 'auto';
-      mount.appendChild(img);
+        onLoad: function(e, data){
+          const status = document.getElementById('status');
+          status.textContent = 'Loaded. Drag to rotate.';
 
-      let i = 0, stopped = false;
-      function tick(){
-        if(stopped) return;
-        img.src = srcs[i] + '?b=' + Date.now();
-        i = (i+1) % srcs.length;
-      }
-      const interval = Math.max(16, Math.round((secondsPerTurn*1000)/srcs.length));
-      const t = setInterval(tick, interval);
-      tick();
-
-      // stop on first user interaction
-      ['mousedown','touchstart','wheel','keydown'].forEach(evt=>{
-        document.addEventListener(evt, ()=>{ if(!stopped){ stopped=true; clearInterval(t); statusEl.textContent='Stopped. Reload page to play again.';} }, {once:true, passive:true});
+          // Stop only autoplay on first interaction; drag remains enabled
+          const $el = $(data.target);
+          const stopAuto = () => { $('#studs360').spritespin('animate', false); };
+          $el.one('mousedown touchstart wheel keydown', stopAuto);
+        }
       });
-    }
-
-    start();
+    })();
   </script>
 </body>
 </html>
