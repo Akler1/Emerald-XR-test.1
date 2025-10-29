@@ -12,6 +12,7 @@
     <title>KeyShotXR</title>
     <style type="text/css">
       body { -ms-touch-action: none; }
+      #KeyShotXR { width:min(92vw,1200px); height:min(92vw,1200px); margin:0 auto; background:#000; }
     </style>
     <script type="text/javascript" src="XR test 28.10.2/files/KeyShotXR.js"></script>
     <script type="text/javascript">
@@ -26,7 +27,7 @@
         var uCount = 192;
         var vCount = 1;
         var uWrap = true;
-        var vWrap = true;              // kept EXACTLY as you had it
+        var vWrap = true;                 // unchanged
         var uMouseSensitivity = -0.533333;
         var vMouseSensitivity = 0.00277778;
         var uStartIndex = 0;
@@ -36,7 +37,7 @@
         var rotationDamping = 0.96;
         var downScaleToBrowser = true;
         var addDownScaleGUIButton = false;
-        var downloadOnInteraction = false;  // preloads all frames (good for smooth autorotate)
+        var downloadOnInteraction = false; // preloads (smoother autorotate)
         var imageExtension = "jpg";
         var showLoading = true;
         var loadingIcon = "ks_logo.png"; // Set to empty string for default icon.
@@ -45,7 +46,7 @@
         var vReverse = false;
         var hotspots = {};
         var isIBooksWidget = false;
-        
+
         keyshotXR = new keyshotXR(
           nameOfDiv, folderName, viewPortWidth, viewPortHeight, backgroundColor,
           uCount, vCount, uWrap, vWrap, uMouseSensitivity, vMouseSensitivity,
@@ -55,58 +56,96 @@
           uReverse, vReverse, hotspots, isIBooksWidget
         );
 
-        /* ===== AUTOROTATE (1 full turn ≈ 4s) — stops on first interaction ===== */
+        /* ================== AUTOROTATE (≈4s per turn) ================== */
         (function autorotateUntilInteract(){
           var container = document.getElementById('KeyShotXR');
           var secondsPerTurn = 4;
           var msPerFrame = Math.max(16, Math.round((secondsPerTurn * 1000) / uCount));
-          var frameU = 0, stopped = false, timer = null;
 
-          function stop() {
+          var stopped = false;
+          var timer = null;
+          var uIndex = 0;
+
+          function stop(){
             if (stopped) return;
             stopped = true;
             if (timer) clearInterval(timer);
             timer = null;
+            // end synthetic drag if we started one
+            try { endSyntheticDrag(container); } catch(e){}
           }
 
-          // stop on any user action
+          // Stop on any interaction
           ['pointerdown','touchstart','wheel','keydown'].forEach(function(evt){
             container.addEventListener(evt, stop, { once:true, passive:true });
           });
 
-          // try setting frame via common methods/fields seen in KeyShotXR builds
-          function setXRFrame(uIndex, vIndex) {
+          // Try clean frame stepping first; if not available, use synthetic drag
+          var useSynthetic = false;
+          function setXRFrame(u, v){
             try {
-              if (keyshotXR && typeof keyshotXR.setViewIndex === 'function') {
-                keyshotXR.setViewIndex(uIndex|0, vIndex|0); return true;
-              }
-              if (keyshotXR && typeof keyshotXR.setCurrentIndex === 'function') {
-                keyshotXR.setCurrentIndex(uIndex|0, vIndex|0); return true;
-              }
-              if (keyshotXR && typeof keyshotXR.SetIndex === 'function') {
-                keyshotXR.SetIndex(uIndex|0, vIndex|0); return true;
-              }
-              if (keyshotXR) {
-                if ('m_uIndex' in keyshotXR) keyshotXR.m_uIndex = uIndex|0;
-                if ('m_vIndex' in keyshotXR) keyshotXR.m_vIndex = vIndex|0;
-                if (typeof keyshotXR.update === 'function') { keyshotXR.update(); return true; }
-                if (typeof keyshotXR.render === 'function') { keyshotXR.render(); return true; }
-              }
-            } catch(e) {}
+              if (keyshotXR && typeof keyshotXR.setViewIndex === 'function') { keyshotXR.setViewIndex(u|0, v|0); return true; }
+              if (keyshotXR && typeof keyshotXR.setCurrentIndex === 'function') { keyshotXR.setCurrentIndex(u|0, v|0); return true; }
+              if (keyshotXR && typeof keyshotXR.SetIndex === 'function') { keyshotXR.SetIndex(u|0, v|0); return true; }
+              // fallback: poke common fields then render/update
+              if (keyshotXR && ('m_uIndex' in keyshotXR)) keyshotXR.m_uIndex = u|0;
+              if (keyshotXR && ('m_vIndex' in keyshotXR)) keyshotXR.m_vIndex = v|0;
+              if (keyshotXR && typeof keyshotXR.update === 'function') { keyshotXR.update(); return true; }
+              if (keyshotXR && typeof keyshotXR.render === 'function') { keyshotXR.render(); return true; }
+            } catch(e){}
             return false;
           }
 
-          // small delay so first frames are cached before spinning
+          // synthetic drag helpers
+          var dragState = null;
+          function beginSyntheticDrag(el){
+            if (dragState) return;
+            var r = el.getBoundingClientRect();
+            var cx = Math.round(r.left + r.width/2);
+            var cy = Math.round(r.top  + r.height/2);
+            dragState = { x: cx, y: cy };
+
+            var down = new PointerEvent('pointerdown', { bubbles:true, clientX:cx, clientY:cy, pointerId:1, buttons:1, pressure:0.5 });
+            el.dispatchEvent(down);
+          }
+          function moveSyntheticDrag(el, dx){
+            if (!dragState) return;
+            dragState.x += dx;
+            var move = new PointerEvent('pointermove', { bubbles:true, clientX:dragState.x, clientY:dragState.y, pointerId:1, buttons:1, pressure:0.5, movementX:dx, movementY:0 });
+            el.dispatchEvent(move);
+          }
+          function endSyntheticDrag(el){
+            if (!dragState) return;
+            var up = new PointerEvent('pointerup', { bubbles:true, clientX:dragState.x, clientY:dragState.y, pointerId:1, buttons:0, pressure:0 });
+            el.dispatchEvent(up);
+            dragState = null;
+          }
+
+          // Start after a tiny delay so first frames cache
           setTimeout(function(){
             if (stopped) return;
+
+            // Probe once: if direct set fails, switch to synthetic drag
+            useSynthetic = !setXRFrame(uIndex, 0);
+            if (useSynthetic) beginSyntheticDrag(container);
+
+            // pixels per “frame” guess for synthetic drag (tuned for ~192 frames/turn)
+            var pxPerStep = 6; // adjust smaller/larger if rotation speed seems off
+
             timer = setInterval(function(){
               if (stopped) return;
-              frameU = (frameU + 1) % uCount;
-              setXRFrame(frameU, 0);  // vIndex=0 since vCount=1
+
+              if (!useSynthetic) {
+                uIndex = (uIndex + 1) % uCount;
+                setXRFrame(uIndex, 0);
+              } else {
+                // move right a little every tick
+                moveSyntheticDrag(container, pxPerStep);
+              }
             }, msPerFrame);
           }, 250);
         })();
-        /* ===== END AUTOROTATE ===== */
+        /* ================= END AUTOROTATE ================= */
       }
 
       window.onload = initKeyShotXR;
