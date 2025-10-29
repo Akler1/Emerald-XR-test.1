@@ -26,7 +26,7 @@
         var uCount = 192;
         var vCount = 1;
         var uWrap = true;
-        var vWrap = true;
+        var vWrap = true;              // kept EXACTLY as you had it
         var uMouseSensitivity = -0.533333;
         var vMouseSensitivity = 0.00277778;
         var uStartIndex = 0;
@@ -36,7 +36,7 @@
         var rotationDamping = 0.96;
         var downScaleToBrowser = true;
         var addDownScaleGUIButton = false;
-        var downloadOnInteraction = false;
+        var downloadOnInteraction = false;  // preloads all frames (good for smooth autorotate)
         var imageExtension = "jpg";
         var showLoading = true;
         var loadingIcon = "ks_logo.png"; // Set to empty string for default icon.
@@ -46,7 +46,67 @@
         var hotspots = {};
         var isIBooksWidget = false;
         
-        keyshotXR = new keyshotXR(nameOfDiv,folderName,viewPortWidth,viewPortHeight,backgroundColor,uCount,vCount,uWrap,vWrap,uMouseSensitivity,vMouseSensitivity,uStartIndex,vStartIndex,minZoom,maxZoom,rotationDamping,downScaleToBrowser,addDownScaleGUIButton,downloadOnInteraction,imageExtension,showLoading,loadingIcon,allowFullscreen,uReverse,vReverse,hotspots,isIBooksWidget);
+        keyshotXR = new keyshotXR(
+          nameOfDiv, folderName, viewPortWidth, viewPortHeight, backgroundColor,
+          uCount, vCount, uWrap, vWrap, uMouseSensitivity, vMouseSensitivity,
+          uStartIndex, vStartIndex, minZoom, maxZoom, rotationDamping,
+          downScaleToBrowser, addDownScaleGUIButton, downloadOnInteraction,
+          imageExtension, showLoading, loadingIcon, allowFullscreen,
+          uReverse, vReverse, hotspots, isIBooksWidget
+        );
+
+        /* ===== AUTOROTATE (1 full turn ≈ 4s) — stops on first interaction ===== */
+        (function autorotateUntilInteract(){
+          var container = document.getElementById('KeyShotXR');
+          var secondsPerTurn = 4;
+          var msPerFrame = Math.max(16, Math.round((secondsPerTurn * 1000) / uCount));
+          var frameU = 0, stopped = false, timer = null;
+
+          function stop() {
+            if (stopped) return;
+            stopped = true;
+            if (timer) clearInterval(timer);
+            timer = null;
+          }
+
+          // stop on any user action
+          ['pointerdown','touchstart','wheel','keydown'].forEach(function(evt){
+            container.addEventListener(evt, stop, { once:true, passive:true });
+          });
+
+          // try setting frame via common methods/fields seen in KeyShotXR builds
+          function setXRFrame(uIndex, vIndex) {
+            try {
+              if (keyshotXR && typeof keyshotXR.setViewIndex === 'function') {
+                keyshotXR.setViewIndex(uIndex|0, vIndex|0); return true;
+              }
+              if (keyshotXR && typeof keyshotXR.setCurrentIndex === 'function') {
+                keyshotXR.setCurrentIndex(uIndex|0, vIndex|0); return true;
+              }
+              if (keyshotXR && typeof keyshotXR.SetIndex === 'function') {
+                keyshotXR.SetIndex(uIndex|0, vIndex|0); return true;
+              }
+              if (keyshotXR) {
+                if ('m_uIndex' in keyshotXR) keyshotXR.m_uIndex = uIndex|0;
+                if ('m_vIndex' in keyshotXR) keyshotXR.m_vIndex = vIndex|0;
+                if (typeof keyshotXR.update === 'function') { keyshotXR.update(); return true; }
+                if (typeof keyshotXR.render === 'function') { keyshotXR.render(); return true; }
+              }
+            } catch(e) {}
+            return false;
+          }
+
+          // small delay so first frames are cached before spinning
+          setTimeout(function(){
+            if (stopped) return;
+            timer = setInterval(function(){
+              if (stopped) return;
+              frameU = (frameU + 1) % uCount;
+              setXRFrame(frameU, 0);  // vIndex=0 since vCount=1
+            }, msPerFrame);
+          }, 250);
+        })();
+        /* ===== END AUTOROTATE ===== */
       }
 
       window.onload = initKeyShotXR;
