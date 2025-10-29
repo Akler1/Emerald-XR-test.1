@@ -3,11 +3,11 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>Studs — 360 (fast autorotate + drag)</title>
+  <title>Studs — 360 (fast, no strobe, drag)</title>
   <style>
     body{margin:0;background:#000;font-family:system-ui,Segoe UI,Roboto,Helvetica,Arial,sans-serif}
     .wrap{width:min(92vw,1000px);margin:24px auto;text-align:center}
-    #view{width:100%;height:auto;touch-action:none;user-select:none;will-change:transform}
+    #view{width:100%;height:auto;touch-action:none;user-select:none}
     #status{color:#bbb;margin-top:8px;font-size:14px}
   </style>
 </head>
@@ -19,101 +19,121 @@
 
   <script>
     // ===== YOUR FRAMES =====
-    const folder = 'XR test 28.10.2';       // note the space
-    const TOTAL  = 192;                      // 0_0.jpg ... 0_191.jpg
-    const TURN_S = 4;                        // seconds per full turn
+    const folder = 'XR test 28.10.2';  // note the space
+    const TOTAL  = 192;                 // 0_0.jpg ... 0_191.jpg
+    const TURN_S = 4;                   // seconds per full turn
     // =======================
 
     const base = encodeURIComponent(folder).replace(/%2F/g,'/');
     const urls = Array.from({length: TOTAL}, (_,i) => `${base}/0_${i}.jpg`);
 
-    const img = document.getElementById('view');
+    const img    = document.getElementById('view');
     const status = document.getElementById('status');
 
-    // Image cache + state
-    const cache = new Array(TOTAL);
+    // Cache and load state
+    const cache = new Array(TOTAL);          // Image() objects once loaded
+    const loaded = new Array(TOTAL).fill(false);
     let loadedCount = 0;
 
-    // Concurrency-limited loader (faster + smoother than blasting 192 requests)
+    // Concurrency-limited loader
     const MAX_CONCURRENT = 8;
-    let inFlight = 0, queue = [];
+    let inFlight = 0, q = [];
     function loadFrame(i){
       return new Promise(res => {
-        const doLoad = () => {
+        const run = () => {
           inFlight++;
           const im = new Image();
           im.decoding = 'async';
-          im.onload = () => { cache[i] = im; loadedCount++; inFlight--; pump(); res(true); };
+          im.onload = () => { cache[i] = im; loaded[i] = true; loadedCount++; inFlight--; pump(); res(true); };
           im.onerror = () => { inFlight--; pump(); res(false); };
-          im.src = urls[i]; // no cache-bust → let CDN/GitHub cache it
+          im.src = urls[i]; // let CDN cache; no cache-bust
         };
-        if (inFlight < MAX_CONCURRENT) doLoad(); else queue.push(doLoad);
+        if (inFlight < MAX_CONCURRENT) run(); else q.push(run);
       });
     }
-    function pump(){ while (inFlight < MAX_CONCURRENT && queue.length) queue.shift()(); }
+    function pump(){ while (inFlight < MAX_CONCURRENT && q.length) q.shift()(); }
 
-    // Initial coarse set (every 2nd frame) so autoplay begins fast
-    const STEP_COARSE = 2; // 0,2,4,… for quick spin
-    const coarseSet = Array.from({length: TOTAL / STEP_COARSE}, (_,k) => k * STEP_COARSE);
-
-    // Playback
+    // Playback state
     let frame = 0;
     let playing = true;
     let lastTs = 0;
-    let usingCoarse = true;
 
-    function setFrame(f){
-      frame = (f + TOTAL) % TOTAL;
-      const im = cache[frame];
-      img.src = im ? im.src : urls[frame];
+    function stepMs(){ return 1000 / (TOTAL / TURN_S); }
+
+    // Advance to the next **loaded** frame; if none yet, stay on current
+    function nextLoadedIndex(i){
+      for (let k = 1; k <= TOTAL; k++){
+        const j = (i + k) % TOTAL;
+        if (loaded[j]) return j;
+      }
+      return i; // nothing else loaded yet
     }
 
-    function currentStepMs(){
-      const activeFrames = usingCoarse ? coarseSet.length : TOTAL;
-      return 1000 / (activeFrames / TURN_S);
-    }
-
-    function nextIndex(i){
-      return usingCoarse ? (i + STEP_COARSE) : (i + 1);
+    function setFrame(i){
+      frame = ((i % TOTAL) + TOTAL) % TOTAL;
+      if (loaded[frame]) img.src = cache[frame].src;
+      // else: keep showing the last displayed image (prevents black strobe)
     }
 
     function tick(ts){
       if (!playing) return;
       if (!lastTs) lastTs = ts;
-      const step = currentStepMs();
-      if (ts - lastTs >= step){
-        setFrame( nextIndex(frame) );
+      if (ts - lastTs >= stepMs()){
+        const j = nextLoadedIndex(frame);
+        setFrame(j);
         lastTs = ts;
       }
       requestAnimationFrame(tick);
     }
 
-    // Drag control
+    // Drag (pointer + mouse/touch fallback)
     function attachDrag(){
       let dragging = false;
       let lastX = 0;
-      const pxPerFrame = 6; // lower = faster rotation per pixel
+      const pxPerFrame = 6; // sensitivity: lower = faster
+
+      const onDown = (clientX, pointerId) => {
+        playing = false; // stop autoplay on first interaction
+        dragging = true;
+        lastX = clientX;
+        if (pointerId != null) img.setPointerCapture(pointerId);
+        status.textContent = 'Drag to rotate.';
+      };
 
       img.addEventListener('pointerdown', (e)=>{
-        playing = false; // stop autoplay on interaction
-        dragging = true;
-        lastX = e.clientX;
-        img.setPointerCapture(e.pointerId);
-        status.textContent = 'Drag to rotate.';
+        onDown(e.clientX, e.pointerId);
       });
-
       img.addEventListener('pointermove', (e)=>{
         if (!dragging) return;
-        const dx = e.clientX - lastX;
-        lastX = e.clientX;
-        if (Math.abs(dx) > 0){
-          const steps = Math.trunc(dx / pxPerFrame);
-          if (steps !== 0) setFrame(frame - steps); // invert sign if preferred
-        }
+        const dx = e.clientX - lastX; lastX = e.clientX;
+        const steps = Math.trunc(dx / pxPerFrame);
+        if (steps) setFrame(frame - steps);
       });
-
       img.addEventListener('pointerup',   ()=> dragging = false);
       img.addEventListener('pointercancel',()=> dragging = false);
+
+      // Fallback for browsers with no pointer events
+      img.addEventListener('mousedown', (e)=> onDown(e.clientX, null));
+      window.addEventListener('mousemove', (e)=>{
+        if (!dragging) return;
+        const dx = e.clientX - lastX; lastX = e.clientX;
+        const steps = Math.trunc(dx / pxPerFrame);
+        if (steps) setFrame(frame - steps);
+      });
+      window.addEventListener('mouseup', ()=> dragging = false);
+
+      img.addEventListener('touchstart', (e)=>{
+        if (!e.touches.length) return;
+        onDown(e.touches[0].clientX, null);
+      }, {passive:true});
+      img.addEventListener('touchmove', (e)=>{
+        if (!dragging || !e.touches.length) return;
+        const x = e.touches[0].clientX;
+        const dx = x - lastX; lastX = x;
+        const steps = Math.trunc(dx / pxPerFrame);
+        if (steps) setFrame(frame - steps);
+      }, {passive:true});
+      img.addEventListener('touchend', ()=> dragging = false);
     }
 
     document.addEventListener('visibilitychange', ()=>{
@@ -122,42 +142,33 @@
     });
 
     (async function start(){
-      // 1) Show something ASAP (load frame 0 first)
+      // Load frame 0 first, show it
       await loadFrame(0);
       setFrame(0);
       status.textContent = 'Loading frames…';
 
-      // 2) Preload the coarse ring quickly
-      for (let k = 1; k < coarseSet.length; k++) loadFrame(coarseSet[k]);
+      // Begin preloading everything (round-robin near current frame)
+      // This pattern fills neighbors first, so autoplay finds loaded frames quickly
+      const order = [];
+      for (let radius = 1; radius < TOTAL; radius++){
+        const f1 = (0 + radius) % TOTAL;
+        const f2 = (0 - radius + TOTAL) % TOTAL;
+        if (order.indexOf(f1) === -1) order.push(f1);
+        if (order.indexOf(f2) === -1) order.push(f2);
+      }
+      order.forEach(i => loadFrame(i));
 
-      // 3) Start autoplay on coarse ring
-      usingCoarse = true;
+      // Start autoplay + drag
       playing = true;
       lastTs = 0;
       requestAnimationFrame(tick);
       attachDrag();
 
-      // 4) Fill in the gaps between coarse frames in a round-robin pattern
-      //    (e.g., load 1,3,5,… then 2,4,6,… for smooth feel)
-      const gapsA = Array.from({length: TOTAL/STEP_COARSE}, (_,k) => k*STEP_COARSE + 1).filter(i => i < TOTAL);
-      const gapsB = Array.from({length: TOTAL/STEP_COARSE}, (_,k) => k*STEP_COARSE + (STEP_COARSE-1)).filter(i => i < TOTAL && i % STEP_COARSE !== 0);
-
-      // Interleave A & B to avoid clusters
-      while (gapsA.length || gapsB.length){
-        if (gapsA.length) loadFrame(gapsA.shift());
-        if (gapsB.length) loadFrame(gapsB.shift());
-      }
-
-      // 5) When ~80% are cached, switch to full-resolution rotation
-      const upgrader = setInterval(()=>{
-        const pct = loadedCount / TOTAL;
-        status.textContent = `Loaded ${Math.round(pct*100)}% — drag to rotate.`;
-        if (pct >= 0.8 && usingCoarse){
-          usingCoarse = false;
-          lastTs = 0; // reset timing for smooth swap
-          clearInterval(upgrader);
-          status.textContent = 'Loaded 100%.';
-        }
+      // Progress indicator
+      const prog = setInterval(()=>{
+        const pct = Math.round(loadedCount / TOTAL * 100);
+        status.textContent = `Loaded ${pct}% — drag to rotate.`;
+        if (pct >= 100) { clearInterval(prog); status.textContent = 'Loaded 100%. Drag to rotate.'; }
       }, 300);
     })();
   </script>
