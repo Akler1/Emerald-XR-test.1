@@ -1,168 +1,198 @@
-<!--
-  KeyShotXR
-  (c) Copyright 2012-2017 Luxion ApS - All Rights Reserved.
--->
-<!DOCTYPE html>
-<html xmlns='http://www.w3.org/1999/xhtml'>
-<head>
-  <meta http-equiv="X-UA-Compatible" content="IE=Edge"/>
-  <meta http-equiv="Content-Type" content="text/html; charset=utf-8"/>
-  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
-  <title>KeyShotXR</title>
-  <style type="text/css">
-    body { -ms-touch-action: none; margin:0; background:#000; }
-    #KeyShotXR { width:min(92vw,1200px); height:min(92vw,1200px); margin:0 auto; background:#000; }
-  </style>
+<script>
+/* ====== KeyShotXR autorotate (robust probe) ====== */
+(function () {
+  // ---- tune speed here ----
+  var SECONDS_PER_TURN = 4;     // ~4s per revolution
+  var uCountFallback   = 192;   // used to compute step timing if we can't read it
+  var PX_PER_MOVE      = 6;     // pixels per synthetic move when faking drag
+  var START_DELAY_MS   = 600;   // give KS a moment to bind handlers
+  // -------------------------
 
-  <script type="text/javascript" src="XR test 28.10.2/files/KeyShotXR.js"></script>
-  <script type="text/javascript">
-    var keyshotXR;
+  var wrapperId = 'KeyShotXR';
+  var timer = null, stopped = false, mode = 'unknown';
+  var uIndex = 0;
 
-    function initKeyShotXR() {
-      var nameOfDiv = "KeyShotXR";
-      var folderName = "XR test 28.10.2";
-      var viewPortWidth = 1200;
-      var viewPortHeight = 1200;
-      var backgroundColor = "#000000";
-      var uCount = 192;
-      var vCount = 1;
-      var uWrap = true;
-      var vWrap = true;
-      var uMouseSensitivity = -0.533333;
-      var vMouseSensitivity = 0.00277778;
-      var uStartIndex = 0;
-      var vStartIndex = 0;
-      var minZoom = 1;
-      var maxZoom = 1;
-      var rotationDamping = 0.96;
-      var downScaleToBrowser = true;
-      var addDownScaleGUIButton = false;
-      var downloadOnInteraction = false; // preload for smooth spin
-      var imageExtension = "jpg";
-      var showLoading = true;
-      var loadingIcon = "ks_logo.png";
-      var allowFullscreen = true;
-      var uReverse = false;
-      var vReverse = false;
-      var hotspots = {};
-      var isIBooksWidget = false;
+  function wrap() { return document.getElementById(wrapperId); }
+  function canvas() {
+    var w = wrap();
+    if (!w) return null;
+    var c = w.querySelector('canvas');
+    return c || w;
+  }
 
-      keyshotXR = new keyshotXR(
-        nameOfDiv, folderName, viewPortWidth, viewPortHeight, backgroundColor,
-        uCount, vCount, uWrap, vWrap, uMouseSensitivity, vMouseSensitivity,
-        uStartIndex, vStartIndex, minZoom, maxZoom, rotationDamping,
-        downScaleToBrowser, addDownScaleGUIButton, downloadOnInteraction,
-        imageExtension, showLoading, loadingIcon, allowFullscreen,
-        uReverse, vReverse, hotspots, isIBooksWidget
-      );
+  function getUCount() {
+    try {
+      if (typeof keyshotXR !== 'undefined') {
+        if (Number.isFinite(keyshotXR.m_uCount)) return keyshotXR.m_uCount;
+        if (Number.isFinite(keyshotXR.uCount))   return keyshotXR.uCount;
+      }
+    } catch(e){}
+    return uCountFallback;
+  }
 
-      /* ===================== AUTOROTATE UNTIL INTERACT ===================== */
-      (function autorotateUntilInteract(){
-        var wrapper = document.getElementById('KeyShotXR');
+  function getUIndex() {
+    try {
+      if (typeof keyshotXR !== 'undefined') {
+        if (Number.isFinite(keyshotXR.m_uIndex)) return keyshotXR.m_uIndex;
+        if (Number.isFinite(keyshotXR.uIndex))   return keyshotXR.uIndex;
+      }
+    } catch(e){}
+    return null; // unknown
+  }
 
-        // Helper: KeyShotXR usually renders into a <canvas> inside the wrapper.
-        function getTarget(){
-          var c = wrapper ? wrapper.querySelector('canvas') : null;
-          return c || wrapper;
-        }
+  function setFrameDirect(u, v) {
+    try {
+      if (keyshotXR && typeof keyshotXR.setViewIndex === 'function') { keyshotXR.setViewIndex(u|0, v|0); return true; }
+      if (keyshotXR && typeof keyshotXR.setCurrentIndex === 'function') { keyshotXR.setCurrentIndex(u|0, v|0); return true; }
+      if (keyshotXR && typeof keyshotXR.SetIndex === 'function') { keyshotXR.SetIndex(u|0, v|0); return true; }
+      if (keyshotXR) {
+        var changed = false;
+        if ('m_uIndex' in keyshotXR) { keyshotXR.m_uIndex = u|0; changed = true; }
+        if ('m_vIndex' in keyshotXR) { keyshotXR.m_vIndex = (v|0); }
+        if (changed && typeof keyshotXR.update === 'function') { keyshotXR.update(); return true; }
+        if (changed && typeof keyshotXR.render === 'function') { keyshotXR.render(); return true; }
+      }
+    } catch(e){}
+    return false;
+  }
 
-        // Tune these if you want a different speed
-        var secondsPerTurn = 4;                            // ~4s per revolution
-        var msPerStep = Math.max(16, Math.round((secondsPerTurn * 1000) / uCount));
-        var pxPerMove = 6;                                // synthetic-drag pixel delta
+  // --- event helpers ---
+  function dispatch(el, type, opts) {
+    if (!el) return;
+    var base = { bubbles:true, cancelable:true };
+    var e;
+    if (window.PointerEvent) {
+      e = new PointerEvent(type, Object.assign({ pointerId:1, pointerType:'mouse', isPrimary:true }, base, opts||{}));
+      el.dispatchEvent(e);
+      return;
+    }
+    // Mouse fallback
+    var mouseType = type.replace('pointer','mouse');
+    e = new MouseEvent(mouseType, Object.assign({ buttons: (type.indexOf('down')>=0 || (opts&&opts.buttons===1)) ? 1 : 0 }, base, opts||{}));
+    el.dispatchEvent(e);
+  }
 
-        var stopped = false, timer = null, uIndex = 0;
-        var mode = 'unknown';
+  function beginHold(el, x, y) {
+    dispatch(el, 'pointerdown', { clientX:x, clientY:y, buttons:1, pressure:0.5 });
+  }
+  function moveHold(el, x, y) {
+    dispatch(el, 'pointermove', { clientX:x, clientY:y, buttons:1, pressure:0.5 });
+  }
+  function endHold(el, x, y) {
+    dispatch(el, 'pointerup',   { clientX:x, clientY:y, buttons:0, pressure:0 });
+  }
 
-        function stop(){
-          if (stopped) return;
-          stopped = true;
-          if (timer) clearInterval(timer), timer = null;
-          try { endSyntheticDrag(getTarget()); } catch(e){}
-        }
+  // --- stop on real interaction ---
+  function attachUserStop() {
+    var w = wrap(); if (!w) return;
+    ['pointerdown','mousedown','touchstart','wheel','keydown'].forEach(function(evt){
+      w.addEventListener(evt, function(){ if (!stopped) stop(); }, { once:true, passive:true });
+    });
+  }
 
-        // Stop autorotate on first real interaction
-        ['pointerdown','mousedown','touchstart','wheel','keydown'].forEach(function(evt){
-          wrapper.addEventListener(evt, stop, { once:true, passive:true });
-        });
+  function stop() {
+    stopped = true;
+    if (timer) { clearInterval(timer); timer = null; }
+    try { endHold(canvas()); } catch(e){}
+  }
 
-        // Try to advance frame directly (if API exists); else fake a drag
-        function setXRFrame(u, v){
-          try {
-            if (keyshotXR && typeof keyshotXR.setViewIndex === 'function') { keyshotXR.setViewIndex(u|0, v|0); return true; }
-            if (keyshotXR && typeof keyshotXR.setCurrentIndex === 'function') { keyshotXR.setCurrentIndex(u|0, v|0); return true; }
-            if (keyshotXR && typeof keyshotXR.SetIndex === 'function') { keyshotXR.SetIndex(u|0, v|0); return true; }
-            if (keyshotXR) {
-              if ('m_uIndex' in keyshotXR) keyshotXR.m_uIndex = u|0;
-              if ('m_vIndex' in keyshotXR) keyshotXR.m_vIndex = v|0;
-              if (typeof keyshotXR.update === 'function') { keyshotXR.update(); return true; }
-              if (typeof keyshotXR.render === 'function') { keyshotXR.render(); return true; }
-            }
-          } catch(e){}
-          return false;
-        }
+  // --- probe a mode for 500ms to see if uIndex changes ---
+  function probe(modeName, stepFn, done) {
+    var c = canvas(); if (!c) return done(false);
+    var r = c.getBoundingClientRect();
+    var x = Math.round(r.left + r.width/2), y = Math.round(r.top + r.height/2);
 
-        // Synthetic drag helpers
-        var dragState = null;
-        function beginSyntheticDrag(el){
-          if (!el || dragState) return;
-          var r = el.getBoundingClientRect();
-          var cx = Math.round(r.left + r.width/2);
-          var cy = Math.round(r.top  + r.height/2);
-          dragState = { x: cx, y: cy };
+    var startU = getUIndex();
+    var ticks = 0;
+    var localTimer = setInterval(function(){
+      if (stopped) { clearInterval(localTimer); return done(false); }
+      ticks++;
+      stepFn(c, x, y);
+      var nowU = getUIndex();
+      if (nowU !== null && startU !== null && nowU !== startU) {
+        clearInterval(localTimer);
+        mode = modeName;
+        return done(true);
+      }
+      if (ticks > 15) { clearInterval(localTimer); done(false); }
+    }, 30);
+  }
 
-          if (window.PointerEvent) {
-            el.dispatchEvent(new PointerEvent('pointerdown', { bubbles:true, clientX:cx, clientY:cy, pointerId:1, buttons:1, pressure:0.5 }));
-          }
-          el.dispatchEvent(new MouseEvent('mousedown', { bubbles:true, clientX:cx, clientY:cy, buttons:1 }));
-        }
-        function moveSyntheticDrag(el, dx){
-          if (!el || !dragState) return;
-          dragState.x += dx;
-          if (window.PointerEvent) {
-            el.dispatchEvent(new PointerEvent('pointermove', { bubbles:true, clientX:dragState.x, clientY:dragState.y, pointerId:1, buttons:1, pressure:0.5 }));
-          }
-          el.dispatchEvent(new MouseEvent('mousemove', { bubbles:true, clientX:dragState.x, clientY:dragState.y, buttons:1 }));
-        }
-        function endSyntheticDrag(el){
-          if (!el || !dragState) return;
-          if (window.PointerEvent) {
-            el.dispatchEvent(new PointerEvent('pointerup', { bubbles:true, clientX:dragState.x, clientY:dragState.y, pointerId:1, buttons:0, pressure:0 }));
-          }
-          el.dispatchEvent(new MouseEvent('mouseup', { bubbles:true, clientX:dragState.x, clientY:dragState.y, buttons:0 }));
-          dragState = null;
-        }
+  // Strategies
+  function strat_pointer_hold_step(c, x, y, state) {
+    if (!state.started) { beginHold(c, x, y); state.started = true; }
+    x += PX_PER_MOVE; moveHold(c, x, y);
+    state.x = x; state.y = y;
+  }
+  function strat_pointer_pulse_step(c, x, y) {
+    beginHold(c, x, y); x += PX_PER_MOVE; moveHold(c, x, y); endHold(c, x, y);
+  }
+  function strat_mouse_hold_step(c, x, y, state) { strat_pointer_hold_step(c, x, y, state); }
+  function strat_mouse_pulse_step(c, x, y) { strat_pointer_pulse_step(c, x, y); }
+  function strat_touch_pulse_step(c, x, y) {
+    // synthesize touch via pointer fallback already handled; pulse again anyway
+    strat_pointer_pulse_step(c, x, y);
+  }
 
-        // Start a moment after load so first frames are cached/bound
-        setTimeout(function(){
-          if (stopped) return;
+  function startAutorotate() {
+    if (stopped) return;
 
-          // Prefer direct frame stepping if available (cleanest)
-          if (setXRFrame(uIndex, 0)) {
-            mode = 'direct-set';
-          } else {
-            mode = 'synthetic-drag';
-            beginSyntheticDrag(getTarget());
-          }
+    var uCount = getUCount();
+    var msPerStep = Math.max(16, Math.round((SECONDS_PER_TURN * 1000) / uCount));
 
-          timer = setInterval(function(){
-            if (stopped) return;
-            if (mode === 'direct-set') {
-              uIndex = (uIndex + 1) % uCount;
-              setXRFrame(uIndex, 0);
-            } else {
-              moveSyntheticDrag(getTarget(), pxPerMove);
-            }
-          }, msPerStep);
-        }, 300);
-      })();
-      /* =================== END AUTOROTATE UNTIL INTERACT =================== */
+    // Try direct stepping first (best quality)
+    var directOk = setFrameDirect((uIndex+1)%uCount, 0);
+    if (directOk) {
+      mode = 'direct';
+      timer = setInterval(function(){
+        if (stopped) return;
+        uIndex = (uIndex + 1) % uCount;
+        setFrameDirect(uIndex, 0);
+      }, msPerStep);
+      return;
     }
 
-    window.onload = initKeyShotXR;
-  </script>
-</head>
-<body oncontextmenu="return false;">
-  <div id="KeyShotXR"></div>
-</body>
-</html>
+    // Otherwise probe which synthetic scheme works, then run it
+    var schemes = [
+      { name:'pointer-hold', step:function(c,x,y,st){ strat_pointer_hold_step(c,x,y,st); }, state:{} },
+      { name:'pointer-pulse', step:strat_pointer_pulse_step },
+      { name:'mouse-hold',   step:function(c,x,y,st){ strat_mouse_hold_step(c,x,y,st); }, state:{} },
+      { name:'mouse-pulse',  step:strat_mouse_pulse_step },
+      { name:'touch-pulse',  step:strat_touch_pulse_step }
+    ];
+
+    (function tryNext(i){
+      if (stopped) return;
+      if (i >= schemes.length) { mode = 'failed'; return; }
+
+      var s = schemes[i];
+      probe(s.name, function(c,x,y){ s.step(c,x,y,s.state||{}); }, function(success){
+        if (success) {
+          // Run steady-state
+          var c = canvas(); if (!c) return;
+          var r = c.getBoundingClientRect();
+          var x = Math.round(r.left + r.width/2), y = Math.round(r.top + r.height/2);
+          if (s.name.indexOf('hold')>=0) beginHold(c, x, y);
+          timer = setInterval(function(){
+            if (stopped) return;
+            s.step(c, x, y, s.state||{});
+            x += PX_PER_MOVE; // keep creeping x so deltas are non-zero
+          }, msPerStep);
+        } else {
+          tryNext(i+1);
+        }
+      });
+    })(0);
+  }
+
+  window.addEventListener('load', function(){
+    attachUserStop();
+    setTimeout(startAutorotate, START_DELAY_MS);
+  });
+
+  document.addEventListener('visibilitychange', function(){
+    if (document.hidden) { stop(); }
+    else if (!stopped) { setTimeout(startAutorotate, 200); }
+  });
+})();
+</script>
