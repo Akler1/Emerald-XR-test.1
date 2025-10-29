@@ -10,9 +10,10 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
   <title>KeyShotXR</title>
   <style type="text/css">
-    body { -ms-touch-action: none; }
+    body { -ms-touch-action: none; margin:0; background:#000; }
     #KeyShotXR { width:min(92vw,1200px); height:min(92vw,1200px); margin:0 auto; background:#000; }
   </style>
+
   <script type="text/javascript" src="XR test 28.10.2/files/KeyShotXR.js"></script>
   <script type="text/javascript">
     var keyshotXR;
@@ -26,7 +27,7 @@
       var uCount = 192;
       var vCount = 1;
       var uWrap = true;
-      var vWrap = true;                // unchanged
+      var vWrap = true;
       var uMouseSensitivity = -0.533333;
       var vMouseSensitivity = 0.00277778;
       var uStartIndex = 0;
@@ -55,33 +56,37 @@
         uReverse, vReverse, hotspots, isIBooksWidget
       );
 
-      /* ===== AUTOROTATE (≈4s/turn) — tries direct-set, else synthetic drag on CANVAS ===== */
+      /* ===================== AUTOROTATE UNTIL INTERACT ===================== */
       (function autorotateUntilInteract(){
         var wrapper = document.getElementById('KeyShotXR');
 
-        // KeyShotXR usually injects a <canvas> inside the wrapper; use that as the event target.
-        function getCanvas(){
-          return wrapper && wrapper.querySelector('canvas') ? wrapper.querySelector('canvas') : wrapper;
+        // Helper: KeyShotXR usually renders into a <canvas> inside the wrapper.
+        function getTarget(){
+          var c = wrapper ? wrapper.querySelector('canvas') : null;
+          return c || wrapper;
         }
 
-        var secondsPerTurn = 4;
-        var msPerFrame = Math.max(16, Math.round((secondsPerTurn * 1000) / uCount));
+        // Tune these if you want a different speed
+        var secondsPerTurn = 4;                            // ~4s per revolution
+        var msPerStep = Math.max(16, Math.round((secondsPerTurn * 1000) / uCount));
+        var pxPerMove = 6;                                // synthetic-drag pixel delta
+
         var stopped = false, timer = null, uIndex = 0;
         var mode = 'unknown';
 
         function stop(){
           if (stopped) return;
           stopped = true;
-          if (timer) clearInterval(timer);
-          timer = null;
-          try { endSyntheticDrag(getCanvas()); } catch(e){}
+          if (timer) clearInterval(timer), timer = null;
+          try { endSyntheticDrag(getTarget()); } catch(e){}
         }
 
-        // stop on first interaction
+        // Stop autorotate on first real interaction
         ['pointerdown','mousedown','touchstart','wheel','keydown'].forEach(function(evt){
           wrapper.addEventListener(evt, stop, { once:true, passive:true });
         });
 
+        // Try to advance frame directly (if API exists); else fake a drag
         function setXRFrame(u, v){
           try {
             if (keyshotXR && typeof keyshotXR.setViewIndex === 'function') { keyshotXR.setViewIndex(u|0, v|0); return true; }
@@ -97,10 +102,10 @@
           return false;
         }
 
-        // Synthetic drag (MouseEvent fallback; uses PointerEvent if available)
+        // Synthetic drag helpers
         var dragState = null;
         function beginSyntheticDrag(el){
-          if (dragState) return;
+          if (!el || dragState) return;
           var r = el.getBoundingClientRect();
           var cx = Math.round(r.left + r.width/2);
           var cy = Math.round(r.top  + r.height/2);
@@ -112,7 +117,7 @@
           el.dispatchEvent(new MouseEvent('mousedown', { bubbles:true, clientX:cx, clientY:cy, buttons:1 }));
         }
         function moveSyntheticDrag(el, dx){
-          if (!dragState) return;
+          if (!el || !dragState) return;
           dragState.x += dx;
           if (window.PointerEvent) {
             el.dispatchEvent(new PointerEvent('pointermove', { bubbles:true, clientX:dragState.x, clientY:dragState.y, pointerId:1, buttons:1, pressure:0.5 }));
@@ -120,7 +125,7 @@
           el.dispatchEvent(new MouseEvent('mousemove', { bubbles:true, clientX:dragState.x, clientY:dragState.y, buttons:1 }));
         }
         function endSyntheticDrag(el){
-          if (!dragState) return;
+          if (!el || !dragState) return;
           if (window.PointerEvent) {
             el.dispatchEvent(new PointerEvent('pointerup', { bubbles:true, clientX:dragState.x, clientY:dragState.y, pointerId:1, buttons:0, pressure:0 }));
           }
@@ -128,21 +133,17 @@
           dragState = null;
         }
 
-        // Start a moment after load so first frames cache
+        // Start a moment after load so first frames are cached/bound
         setTimeout(function(){
           if (stopped) return;
 
-          var ok = setXRFrame(uIndex, 0);
-          if (ok) {
+          // Prefer direct frame stepping if available (cleanest)
+          if (setXRFrame(uIndex, 0)) {
             mode = 'direct-set';
-            console.log('[XR] Autorotate mode:', mode);
           } else {
-            mode = 'synthetic-mouse';
-            console.log('[XR] Autorotate mode:', mode);
-            beginSyntheticDrag(getCanvas());
+            mode = 'synthetic-drag';
+            beginSyntheticDrag(getTarget());
           }
-
-          var pxPerStep = 6; // adjust if synthetic feels too slow/fast
 
           timer = setInterval(function(){
             if (stopped) return;
@@ -150,12 +151,12 @@
               uIndex = (uIndex + 1) % uCount;
               setXRFrame(uIndex, 0);
             } else {
-              moveSyntheticDrag(getCanvas(), pxPerStep);
+              moveSyntheticDrag(getTarget(), pxPerMove);
             }
-          }, msPerFrame);
+          }, msPerStep);
         }, 300);
       })();
-      /* ===== END AUTOROTATE ===== */
+      /* =================== END AUTOROTATE UNTIL INTERACT =================== */
     }
 
     window.onload = initKeyShotXR;
