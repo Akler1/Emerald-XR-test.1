@@ -3,81 +3,162 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>Studs — 360 (autorotate + drag)</title>
-
-  <!-- jQuery (cdnjs) -->
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/jquery/3.7.1/jquery.min.js" crossorigin="anonymous"></script>
-
-  <!-- SpriteSpin 4.1.0 (jsDelivr) -->
-  <link  href="https://cdn.jsdelivr.net/npm/spritespin@4.1.0/release/spritespin.min.css" rel="stylesheet" />
-  <script src="https://cdn.jsdelivr.net/npm/spritespin@4.1.0/release/spritespin.min.js"></script>
-
+  <title>Studs — 360 (fast autorotate + drag)</title>
   <style>
     body{margin:0;background:#000;font-family:system-ui,Segoe UI,Roboto,Helvetica,Arial,sans-serif}
-    .wrap{width:min(92vw,1200px);margin:24px auto;text-align:center}
-    #studs360{width:100%;height:auto}
+    .wrap{width:min(92vw,1000px);margin:24px auto;text-align:center}
+    #view{width:100%;height:auto;touch-action:none;user-select:none;will-change:transform}
     #status{color:#bbb;margin-top:8px;font-size:14px}
   </style>
 </head>
 <body>
   <div class="wrap">
-    <div id="studs360"></div>
+    <img id="view" alt="360 view (drag to rotate)" decoding="async" fetchpriority="high"/>
     <div id="status">Loading…</div>
   </div>
 
   <script>
-    // === YOUR EXACT FRAMES ===
-    const folder = 'XR test 28.10.2';   // note the space
-    const total  = 192;                  // 0_0.jpg ... 0_191.jpg
-    const secondsPerTurn = 4;            // autorotate speed
-    // =========================
+    // ===== YOUR FRAMES =====
+    const folder = 'XR test 28.10.2';       // note the space
+    const TOTAL  = 192;                      // 0_0.jpg ... 0_191.jpg
+    const TURN_S = 4;                        // seconds per full turn
+    // =======================
 
-    // URL-encode spaces for requests
     const base = encodeURIComponent(folder).replace(/%2F/g,'/');
-    const srcs = Array.from({length: total}, (_,i) => `${base}/0_${i}.jpg`);
+    const urls = Array.from({length: TOTAL}, (_,i) => `${base}/0_${i}.jpg`);
 
-    // Probe first frame so we fail gracefully if the path is off
-    function probeFirst(){
-      return new Promise(res=>{
-        const im = new Image();
-        im.onload = () => res(true);
-        im.onerror = () => res(false);
-        im.src = srcs[0] + '?b=' + Date.now();
+    const img = document.getElementById('view');
+    const status = document.getElementById('status');
+
+    // Image cache + state
+    const cache = new Array(TOTAL);
+    let loadedCount = 0;
+
+    // Concurrency-limited loader (faster + smoother than blasting 192 requests)
+    const MAX_CONCURRENT = 8;
+    let inFlight = 0, queue = [];
+    function loadFrame(i){
+      return new Promise(res => {
+        const doLoad = () => {
+          inFlight++;
+          const im = new Image();
+          im.decoding = 'async';
+          im.onload = () => { cache[i] = im; loadedCount++; inFlight--; pump(); res(true); };
+          im.onerror = () => { inFlight--; pump(); res(false); };
+          im.src = urls[i]; // no cache-bust → let CDN/GitHub cache it
+        };
+        if (inFlight < MAX_CONCURRENT) doLoad(); else queue.push(doLoad);
       });
     }
+    function pump(){ while (inFlight < MAX_CONCURRENT && queue.length) queue.shift()(); }
 
-    (async function start(){
-      const ok = await probeFirst();
-      if(!ok){
-        document.getElementById('status').textContent =
-          "Can't load first frame: " + srcs[0] + " — check folder/name/case.";
-        return;
+    // Initial coarse set (every 2nd frame) so autoplay begins fast
+    const STEP_COARSE = 2; // 0,2,4,… for quick spin
+    const coarseSet = Array.from({length: TOTAL / STEP_COARSE}, (_,k) => k * STEP_COARSE);
+
+    // Playback
+    let frame = 0;
+    let playing = true;
+    let lastTs = 0;
+    let usingCoarse = true;
+
+    function setFrame(f){
+      frame = (f + TOTAL) % TOTAL;
+      const im = cache[frame];
+      img.src = im ? im.src : urls[frame];
+    }
+
+    function currentStepMs(){
+      const activeFrames = usingCoarse ? coarseSet.length : TOTAL;
+      return 1000 / (activeFrames / TURN_S);
+    }
+
+    function nextIndex(i){
+      return usingCoarse ? (i + STEP_COARSE) : (i + 1);
+    }
+
+    function tick(ts){
+      if (!playing) return;
+      if (!lastTs) lastTs = ts;
+      const step = currentStepMs();
+      if (ts - lastTs >= step){
+        setFrame( nextIndex(frame) );
+        lastTs = ts;
       }
+      requestAnimationFrame(tick);
+    }
 
-      // Initialize SpriteSpin (autorotate + drag)
-      $('#studs360').spritespin({
-        source: srcs,
-        width: 1200,
-        height: 1200,
-        sense: 1,                         // drag direction (set -1 to invert)
-        animate: true,                    // AUTOROTATE ON
-        loop: true,
-        frame: 0,
-        frames: srcs.length,
-        frameTime: Math.round((secondsPerTurn*1000)/srcs.length), // ~4s/turn
-        responsive: true,
-        detectSubsampling: true,
+    // Drag control
+    function attachDrag(){
+      let dragging = false;
+      let lastX = 0;
+      const pxPerFrame = 6; // lower = faster rotation per pixel
 
-        onLoad: function(e, data){
-          const status = document.getElementById('status');
-          status.textContent = 'Loaded. Drag to rotate.';
+      img.addEventListener('pointerdown', (e)=>{
+        playing = false; // stop autoplay on interaction
+        dragging = true;
+        lastX = e.clientX;
+        img.setPointerCapture(e.pointerId);
+        status.textContent = 'Drag to rotate.';
+      });
 
-          // Stop only autoplay on first interaction; drag remains enabled
-          const $el = $(data.target);
-          const stopAuto = () => { $('#studs360').spritespin('animate', false); };
-          $el.one('mousedown touchstart wheel keydown', stopAuto);
+      img.addEventListener('pointermove', (e)=>{
+        if (!dragging) return;
+        const dx = e.clientX - lastX;
+        lastX = e.clientX;
+        if (Math.abs(dx) > 0){
+          const steps = Math.trunc(dx / pxPerFrame);
+          if (steps !== 0) setFrame(frame - steps); // invert sign if preferred
         }
       });
+
+      img.addEventListener('pointerup',   ()=> dragging = false);
+      img.addEventListener('pointercancel',()=> dragging = false);
+    }
+
+    document.addEventListener('visibilitychange', ()=>{
+      if (document.hidden) playing = false;
+      else { playing = true; lastTs = 0; requestAnimationFrame(tick); }
+    });
+
+    (async function start(){
+      // 1) Show something ASAP (load frame 0 first)
+      await loadFrame(0);
+      setFrame(0);
+      status.textContent = 'Loading frames…';
+
+      // 2) Preload the coarse ring quickly
+      for (let k = 1; k < coarseSet.length; k++) loadFrame(coarseSet[k]);
+
+      // 3) Start autoplay on coarse ring
+      usingCoarse = true;
+      playing = true;
+      lastTs = 0;
+      requestAnimationFrame(tick);
+      attachDrag();
+
+      // 4) Fill in the gaps between coarse frames in a round-robin pattern
+      //    (e.g., load 1,3,5,… then 2,4,6,… for smooth feel)
+      const gapsA = Array.from({length: TOTAL/STEP_COARSE}, (_,k) => k*STEP_COARSE + 1).filter(i => i < TOTAL);
+      const gapsB = Array.from({length: TOTAL/STEP_COARSE}, (_,k) => k*STEP_COARSE + (STEP_COARSE-1)).filter(i => i < TOTAL && i % STEP_COARSE !== 0);
+
+      // Interleave A & B to avoid clusters
+      while (gapsA.length || gapsB.length){
+        if (gapsA.length) loadFrame(gapsA.shift());
+        if (gapsB.length) loadFrame(gapsB.shift());
+      }
+
+      // 5) When ~80% are cached, switch to full-resolution rotation
+      const upgrader = setInterval(()=>{
+        const pct = loadedCount / TOTAL;
+        status.textContent = `Loaded ${Math.round(pct*100)}% — drag to rotate.`;
+        if (pct >= 0.8 && usingCoarse){
+          usingCoarse = false;
+          lastTs = 0; // reset timing for smooth swap
+          clearInterval(upgrader);
+          status.textContent = 'Loaded 100%.';
+        }
+      }, 300);
     })();
   </script>
 </body>
