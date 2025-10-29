@@ -5,12 +5,14 @@
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>Studs — 360 (autorotate + drag)</title>
   <style>
-    body{margin:0;background:#000}
-    .spin-wrap{width:min(92vw,1200px);margin:0 auto}
+    body{margin:0;background:#000;font-family:system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif}
+    .spin-wrap{width:min(92vw,1200px);margin:24px auto}
     #studs360{width:100%;height:auto}
+    .notice{color:#bbb;text-align:center;margin-top:12px;font-size:14px}
+    .error{color:#ff8f8f;text-align:center;margin-top:16px;font-size:14px;white-space:pre-line}
   </style>
 
-  <!-- Add these three includes (free CDN) -->
+  <!-- CDNs -->
   <script src="https://code.jquery.com/jquery-3.7.1.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/spritespin@4.0.12/release/spritespin.min.js"></script>
   <link  href="https://cdn.jsdelivr.net/npm/spritespin@4.0.12/release/spritespin.min.css" rel="stylesheet" />
@@ -18,39 +20,106 @@
 <body>
   <div class="spin-wrap">
     <div id="studs360"></div>
+    <div class="notice" id="status">Loading…</div>
+    <div class="error" id="err"></div>
   </div>
 
   <script>
-    /* ---------- BUILD THE FRAME LIST (KeyShot-style names) ---------- */
-    // This matches KeyShotXR export when vCount = 1: u0000_v0000.jpg ... u0191_v0000.jpg
-    // If your frames are WebP, change ".jpg" to ".webp" below.
-    // If your folder is named differently, change the path prefix.
+    // === CONFIG YOU MAY NEED TO CHANGE ===
+    const folder = 'XR test 28.10.2';                     // your frames folder
+    const framesCount = 192;                               // total frames (uCount)
+    const secondsPerTurn = 4;                              // autoplay speed
+    // =====================================
 
-    const frames = [];
-    for (let u = 0; u < 192; u++) {
-      const uu = String(u).padStart(4, '0');
-      frames.push(`XR test 28.10.2/u${uu}_v0000.jpg`);
+    // URL-encode spaces
+    const folderEnc = encodeURIComponent(folder).replace(/%2F/g,'/');
+
+    // Candidate patterns to try (in order):
+    const patterns = [
+      (i) => `${folderEnc}/u${String(i).padStart(4,'0')}_v0000.jpg`,
+      (i) => `${folderEnc}/u${String(i).padStart(4,'0')}_v0000.webp`,
+      (i) => `${folderEnc}/image_${String(i+1).toString().padStart(4,'0')}.jpg`,
+      (i) => `${folderEnc}/image_${String(i+1).toString().padStart(4,'0')}.webp`,
+    ];
+
+    const statusEl = document.getElementById('status');
+    const errEl = document.getElementById('err');
+
+    function probe(src){
+      return new Promise(res => {
+        const im = new Image();
+        im.onload = () => res(true);
+        im.onerror = () => res(false);
+        im.src = src + (src.includes('?') ? '&' : '?') + 'cachebust=' + Date.now();
+      });
     }
 
-    /* ---------- INIT SPRITESPIN (autorotate, then stop on user action) ---------- */
-    $('#studs360').spritespin({
-      source: frames,
-      width: 1200,
-      height: 1200,
-      sense: 1,                     // drag direction
-      animate: true,                // AUTOPLAY ON
-      loop: true,
-      frame: 0,
-      frames: frames.length,
-      frameTime: Math.round(4000 / frames.length), // ~4s per revolution
-      responsive: true,
-      detectSubsampling: true,
-      onLoad: function(e, data){
-        const $el = $(data.target);
-        const stop = () => { data.animate = false; };
-        $el.one('mousedown touchstart wheel keydown', stop); // stop autoplay on first interaction
+    async function autoDetectAndStart(){
+      statusEl.textContent = 'Detecting frame pattern…';
+      let chosen = null, first = 0;
+
+      // Try each pattern against the first handful of frames to be safe
+      for (const pat of patterns) {
+        const testSrc = pat(0);
+        /* eslint-disable no-await-in-loop */
+        const ok = await probe(testSrc);
+        if (ok) { chosen = pat; first = 0; break; }
       }
-    });
+
+      if (!chosen) {
+        // Try KeyShot starting at u0001 just in case
+        for (const pat of patterns) {
+          const testSrc = pat(1);
+          /* eslint-disable no-await-in-loop */
+          const ok = await probe(testSrc);
+          if (ok) { chosen = pat; first = 1; break; }
+        }
+      }
+
+      if (!chosen) {
+        statusEl.textContent = '';
+        errEl.textContent =
+`Couldn’t find your frames.
+Check:
+• Folder name: ${folder} (spaces/case)
+• Are images inside that folder (not another subfolder)?
+• Naming: u0000_v0000.(jpg|webp) OR image_0001.(jpg|webp)
+• If WebP, did you actually convert (not just rename)?
+Try opening one directly in your browser:
+…/${folderEnc}/u0000_v0000.jpg`;
+        return;
+      }
+
+      // Build the full list
+      const srcs = [];
+      for (let i = 0; i < framesCount; i++) srcs.push(chosen(i));
+
+      // Init SpriteSpin
+      $('#studs360').spritespin({
+        source: srcs,
+        width: 1200,
+        height: 1200,
+        sense: 1,
+        animate: true,                         // AUTOROTATE ON
+        loop: true,
+        frame: 0,
+        frames: srcs.length,
+        frameTime: Math.round((secondsPerTurn * 1000) / srcs.length),
+        responsive: true,
+        detectSubsampling: true,
+        onLoad: function(e, data){
+          statusEl.textContent = 'Loaded. Drag to control.';
+          const $el = $(data.target);
+          const stop = () => { data.animate = false; statusEl.textContent = 'Drag to rotate.'; };
+          $el.one('mousedown touchstart wheel keydown', stop);
+        },
+        onProgress: function(e, data){
+          statusEl.textContent = `Loading frames ${Math.min(data.progress,100)}%…`;
+        }
+      });
+    }
+
+    autoDetectAndStart();
   </script>
 </body>
 </html>
