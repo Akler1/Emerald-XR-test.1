@@ -2,6 +2,7 @@
   KeyShotXR
   (c) Copyright 2012-2017 Luxion ApS - All Rights Reserved.
 -->
+
 <!DOCTYPE html>
 <html xmlns='http://www.w3.org/1999/xhtml'>
   <head>
@@ -11,31 +12,29 @@
     <title>KeyShotXR</title>
     <style type="text/css">
       body { -ms-touch-action: none; margin:0; background:#000; }
-      #KeyShotXR {
-        width: min(92vw, 1200px);
-        height: min(92vw, 1200px);
-        margin: 0 auto;
-        background: #000;
-      }
+      #KeyShotXR { width:min(92vw,1024px); height:min(92vw,1024px); margin:0 auto; background:#000; }
     </style>
-    <!-- this must match your folder name exactly -->
-    <script type="text/javascript" src="XR test 28.10.2/files/KeyShotXR.js"></script>
+
+    <!-- THIS is what your working one used 👇 -->
+    <script type="text/javascript" src="Emeral XR.1/files/KeyShotXR.js"></script>
+
     <script type="text/javascript">
       var keyshotXR;
+
       function initKeyShotXR() {
         var nameOfDiv = "KeyShotXR";
-        var folderName = "XR test 28.10.2";  // folder that has /files + all the images
-        var viewPortWidth = 1200;
-        var viewPortHeight = 1200;
+        var folderName = "Emeral XR.1";  // 👈 this was the folder that worked
+        var viewPortWidth = 1024;
+        var viewPortHeight = 1024;
         var backgroundColor = "#000000";
-        var uCount = 192;
-        var vCount = 1;
+        var uCount = 30;
+        var vCount = 15;
         var uWrap = true;
-        var vWrap = true;
-        var uMouseSensitivity = -0.533333;
-        var vMouseSensitivity = 0.00277778;
-        var uStartIndex = 0;
-        var vStartIndex = 0;
+        var vWrap = false;
+        var uMouseSensitivity = -0.0833333;
+        var vMouseSensitivity = 0.09375;
+        var uStartIndex = 15;
+        var vStartIndex = 8;
         var minZoom = 1;
         var maxZoom = 1;
         var rotationDamping = 0.96;
@@ -44,26 +43,33 @@
         var downloadOnInteraction = false;
         var imageExtension = "jpg";
         var showLoading = true;
-        var loadingIcon = "ks_logo.png";
+        var loadingIcon = "ks_logo.png"; // or "" if you don't have it
         var allowFullscreen = true;
         var uReverse = false;
         var vReverse = false;
         var hotspots = {};
         var isIBooksWidget = false;
-
+        
         keyshotXR = new keyshotXR(
-          nameOfDiv, folderName, viewPortWidth, viewPortHeight, backgroundColor,
-          uCount, vCount, uWrap, vWrap, uMouseSensitivity, vMouseSensitivity,
-          uStartIndex, vStartIndex, minZoom, maxZoom, rotationDamping,
-          downScaleToBrowser, addDownScaleGUIButton, downloadOnInteraction,
-          imageExtension, showLoading, loadingIcon, allowFullscreen,
-          uReverse, vReverse, hotspots, isIBooksWidget
+          nameOfDiv,folderName,viewPortWidth,viewPortHeight,backgroundColor,
+          uCount,vCount,uWrap,vWrap,uMouseSensitivity,vMouseSensitivity,
+          uStartIndex,vStartIndex,minZoom,maxZoom,rotationDamping,
+          downScaleToBrowser,addDownScaleGUIButton,downloadOnInteraction,
+          imageExtension,showLoading,loadingIcon,allowFullscreen,
+          uReverse,vReverse,hotspots,isIBooksWidget
         );
       }
+
       window.onload = initKeyShotXR;
     </script>
   </head>
   <body oncontextmenu="return false;">
-    <div id="KeyShotXR"></div>
+    <div id="KeyShotXR">
+      <!-- fallback so it's never all-white -->
+      <p style="color:#fff;font-family:monospace;padding:1rem;">
+        Loading KeyShotXR… if this stays here, check that
+        <code>Emeral XR.1/files/KeyShotXR.js</code> exists and the folder name has no typos.
+      </p>
+    </div>
   </body>
 </html>
